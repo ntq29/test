@@ -10,7 +10,8 @@ import xgboost as xgb
 
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error
-
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import KFold
 
 # We need to forecast the electricity price for alberta
 # Extract Data 
@@ -95,15 +96,43 @@ def go_take_data_url(start_date, end_date):
 
     # Create a DataFrame containing the data stored on table #2 (Index = 1) in the HTML
     df = df_list[1]
+    
+    '''#csv file creation
+    file_name = 'aeso_{}_{}_to_{}.csv'.format(report_type, start_date, end_date)
+    file_path = 'Data/{}'.format(file_name)
+    df.to_csv(file_path)
+    '''
+    
 
     # Display the DataFrame
     return df
 
+#population
+def population():
+    data  = pd.read_csv(r'Data\population.csv')
+    print(data)
+    
+    melted_pop = pd.melt(data,id_vars=['Year'], var_name='Quarter', value_name='Population')
+    melted_pop.sort_values(by=['Year','Quarter'],inplace=True)
+    melted_pop.reset_index(drop=True, inplace=True)
+
+    
+    melted_pop['YearQuarter'] = melted_pop['Year'].astype(str) + melted_pop['Quarter'] 
+    # Drop the original 'Year' and 'Quarter' columns if needed
+    melted_pop.drop(columns=['Year', 'Quarter'], inplace=True)
+    
+    melted_pop['YearQuarter'] = pd.to_datetime(melted_pop['YearQuarter'])
+    melted_pop.set_index('YearQuarter', inplace=True)
+    # Merge using asof merge
+    print('Total to Pass', melted_pop)
+    
+    return melted_pop
+
+    
 #feature engineering
 def engineering_features(data):
     return (data
         .drop(data.columns[0],axis=1)
-
             .assign(**{"Date (HE)": data["Date (HE)"].str.replace("*", "", regex=False)})  # Remove asterisks
             .assign(Date=lambda x: pd.to_datetime(x['Date (HE)'].str[:-3], format='%m/%d/%Y'),  # Extract and convert date
                     Hour=lambda x: x['Date (HE)'].str[-2:].astype(int))  # Extract hour as integer
@@ -139,7 +168,7 @@ def engineering_features(data):
 def plotting(df):
     # Set the style of seaborn
     sns.set_theme(style="whitegrid")
-
+    
     # Plot 1: Price Time Series
     plt.figure(figsize=(14, 6))
     plt.plot(df.index.get_level_values('date'), df['price'], marker='o', linestyle='-', markersize=2)
@@ -201,7 +230,7 @@ def plotting_natalia(df):
     plt.figure(figsize=(10, 6))
     sns.barplot(x='year', y='price', data=year_avg)
     plt.title('Average Price by Year')
-    plt.xlabel('Hour')
+    plt.xlabel('Year')
     plt.ylabel('Average Price ($)')
     plt.show()
 
@@ -224,11 +253,35 @@ def plotting_natalia(df):
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
     plt.tight_layout()
     plt.title('Average Price by Month')
-    plt.xlabel('Month')
+    plt.xlabel('Date')
     plt.ylabel('Average Price ($)')
     plt.show()
 
-
+    #cross plot for this
+    p_avg = df.groupby(['month', 'year'])['Population'].mean().reset_index()
+    p_avg.sort_values(by=['year', 'month'], inplace=True)
+    p_avg['mm-yyyy']=monthly_avg['month'].astype(str)+'-'+monthly_avg['year'].astype(str)
+    print(p_avg)
+    len(p_avg)
+    len(monthly_avg)
+    plt.figure(figsize=(20, 4))
+    
+    #print(df.columns)
+    #df_single_index = df.copy() 
+    #Wdf_single_index.index = df_single_index.index.droplevel(1)
+    #print(df.index)
+    # Resample to quarterly frequency and aggregate using sum (or other desired aggregation function)
+    #quarterly_df = new_df.resample('Q').mean() 
+    # Reset index if needed
+    plt.scatter(monthly_avg['price'],p_avg['Population']) 
+    plt.xlabel('price')
+    plt.ylabel('population')
+    #print(type(y_test))
+    #print(type(predictions))
+    plt.legend()
+    plt.show()
+        
+        
 #modeling
 def modeling(df):
     # Prepare features and target variable
@@ -243,22 +296,23 @@ def modeling(df):
     )
 
     # Setup TimeSeries Cross-validation
-    tscv = TimeSeriesSplit(n_splits=50)
+    tscv = TimeSeriesSplit(n_splits=3)
 
     # Lists to store results of CV testing
     rmse_scores = []
+    
 
     for fold, (train_index, test_index) in enumerate(tscv.split(X), 1):
         X_train, X_test = X.iloc[train_index], X.iloc[test_index]
         y_train, y_test = y.iloc[train_index], y.iloc[test_index]
-
+   
         # Fit the model
         model.fit(
             X_train, y_train,
             eval_set=[(X_test, y_test)],
             verbose=False
         )
-
+        print('this is X', X_test)
         # Predict and evaluate
         predictions = model.predict(X_test)
         rmse = np.sqrt(mean_squared_error(y_test, predictions))
@@ -270,7 +324,67 @@ def modeling(df):
         datetime_index = pd.to_datetime(test_dates) + pd.to_timedelta(test_hours-1, unit='h')
 
         # Plotting predictions vs. real values
-        '''plt.figure(figsize=(20, 4))
+        plt.figure(figsize=(20, 4))
+        plt.plot(datetime_index, y_test, label='Actual Prices', marker='o')
+        plt.plot(datetime_index, predictions, label='Predicted Prices', marker='x')
+        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        plt.legend()
+        plt.show()
+        
+        
+        '''#cross plot for this
+        plt.figure(figsize=(20, 4))
+        plt.scatter(y_test, predictions,s=rmse) 
+        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        #print(type(y_test))
+        #print(type(predictions))
+        plt.xlabel('Actual Prices')
+        plt.ylabel('Predicted Prices')
+        plt.legend()
+        plt.show()
+        '''
+    # Display average RMSE over all folds
+        #print('test=',y_test)
+        #print('pred=',predictions)
+    print("Average RMSE:", np.mean(rmse_scores))
+    
+   # index = pd.date_range(start='2022-01-01', end='2022-12-31', freq='D')
+
+
+def linear_reg(df):
+    # Prepare features and target variable
+    X = df.drop('price', axis=1)
+    y = df['price']
+    lr = LinearRegression()
+    # Setup TimeSeries Cross-validation
+    tscv = TimeSeriesSplit(n_splits=50)
+    # Lists to store results of CV testing
+    rmse_scores = []
+
+    for fold, (train_index, test_index) in enumerate(tscv.split(X), 1):
+        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+        # Fit the model
+        lr.fit(X_train, y_train)
+
+        # Predict and evaluate
+        predictions = lr.predict(X_test)
+        rmse = np.sqrt(mean_squared_error(y_test, predictions))
+        rmse_scores.append(rmse)
+
+        # Create a datetime index for plotting
+        test_dates = X_test.index.get_level_values('date')
+        test_hours = X_test.index.get_level_values('hour')
+        datetime_index = pd.to_datetime(test_dates) + pd.to_timedelta(test_hours-1, unit='h')
+
+        '''# Plotting predictions vs. real values
+        plt.figure(figsize=(20, 4))
         plt.plot(datetime_index, y_test, label='Actual Prices', marker='o')
         plt.plot(datetime_index, predictions, label='Predicted Prices', marker='x')
         plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
@@ -279,12 +393,33 @@ def modeling(df):
         plt.legend()
         plt.show()
         '''
+        '''
+        #cross plot for this
+        plt.figure(figsize=(20, 4))
+        plt.scatter(y_test, predictions,s=rmse) 
+        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
         print(f"Test RMSE for fold {fold}: {rmse}")
-
+        #print(type(y_test))
+        #print(type(predictions))
+        plt.xlabel('Actual Prices')
+        plt.ylabel('Predicted Prices')
+        plt.legend()
+        plt.show()
+        '''
+        
     # Display average RMSE over all folds
-    print("Average RMSE:", np.mean(rmse_scores))
+        #print('test=',y_test)
+        #print('pred=',predictions)
+        rmsl=np.mean(rmse_scores)
+        print("Average RMSE_lineal:", rmsl)
+        return rmsl
+#DECIDING BEST MODEL???
 
-#cross plot for this
+
+#cleaning data
+
 
 
     #df['df']=df['month'].map(str)+'-'+df['year'].map(str)
@@ -296,14 +431,14 @@ if __name__ == "__main__":
     #end_date = input('Please enter a end date in MMDDYYYY: ')
     #elec_df = url_extract_electricity_data(start_date, end_date)
     elec_df = url_extract_electricity_data("01012018", "01012023")
+    population = population()
+    #merging population with data
+    
+    print(elec_df)
     engineered_df = engineering_features(elec_df)
+    engineered_df = pd.merge_asof(engineered_df, population, left_on='date', right_index=True, direction='forward')
     print(engineered_df)
     #plotting(engineered_df)
     plotting_natalia(engineered_df)
     modeling(engineered_df)
-
-
-#cleaning data
-
-
-
+    #linear_reg(engineered_df)

@@ -8,10 +8,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import xgboost as xgb
 
-from sklearn.model_selection import TimeSeriesSplit
+from sklearn.model_selection import TimeSeriesSplit, train_test_split, KFold
 from sklearn.metrics import mean_squared_error
 from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import KFold
+from sklearn import metrics
+from sklearn.svm import SVR
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
 
 # We need to forecast the electricity price for alberta
 # Extract Data 
@@ -225,6 +229,8 @@ def check_date_size(val):
 
 def plotting_natalia(df):
 
+    sns.set(style="whitegrid")
+
     # Plot 1 year progresion
     year_avg = df.groupby('year')['price'].mean().reset_index()
     plt.figure(figsize=(10, 6))
@@ -265,22 +271,36 @@ def plotting_natalia(df):
     len(p_avg)
     len(monthly_avg)
     plt.figure(figsize=(20, 4))
-    
-    #print(df.columns)
-    #df_single_index = df.copy() 
-    #Wdf_single_index.index = df_single_index.index.droplevel(1)
-    #print(df.index)
-    # Resample to quarterly frequency and aggregate using sum (or other desired aggregation function)
-    #quarterly_df = new_df.resample('Q').mean() 
-    # Reset index if needed
-    plt.scatter(monthly_avg['price'],p_avg['Population']) 
-    plt.xlabel('price')
-    plt.ylabel('population')
-    #print(type(y_test))
-    #print(type(predictions))
-    plt.legend()
+    plt.scatter(monthly_avg['price'],p_avg['Population'],s=100,color='red') 
+    plt.xlabel('Price')
+    plt.ylabel('Population')
+    #plt.legend()
     plt.show()
-        
+    
+    #grafica poblacion vs tiempo
+
+    plt.figure(figsize=(14, 6))
+    plt.plot(p_avg['mm-yyyy'], p_avg['Population'], color='green',marker='o', linestyle='-', markersize=2)
+    plt.title('Population vs Time')
+    plt.xlabel('Date')
+    plt.ylabel('Population')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+    #grafica demanda vs tiempo
+    d_avg = df.groupby(['month', 'year'])['ail'].mean().reset_index()
+    d_avg.sort_values(by=['year', 'month'], inplace=True)
+    d_avg['mm-yyyy']=d_avg['month'].astype(str)+'-'+d_avg['year'].astype(str)
+    print(d_avg)
+    plt.figure(figsize=(20, 6))
+    ax = sns.barplot(x='mm-yyyy', y='ail', data=d_avg)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+    plt.tight_layout()
+    plt.title('Average Demand vs Time')
+    plt.xlabel('Date')
+    plt.ylabel('ADemand(MW)')
+    plt.show()
         
 #modeling
 def modeling(df):
@@ -296,11 +316,11 @@ def modeling(df):
     )
 
     # Setup TimeSeries Cross-validation
-    tscv = TimeSeriesSplit(n_splits=3)
+    tscv = TimeSeriesSplit(n_splits=2)
 
     # Lists to store results of CV testing
     rmse_scores = []
-    
+    r2_score =[]
 
     for fold, (train_index, test_index) in enumerate(tscv.split(X), 1):
         X_train, X_test = X.iloc[train_index], X.iloc[test_index]
@@ -312,11 +332,13 @@ def modeling(df):
             eval_set=[(X_test, y_test)],
             verbose=False
         )
-        print('this is X', X_test)
+        #print('this is X', X_test)
         # Predict and evaluate
         predictions = model.predict(X_test)
         rmse = np.sqrt(mean_squared_error(y_test, predictions))
         rmse_scores.append(rmse)
+        r_2= metrics.r2_score(y_test, predictions)
+        r2_score.append(r_2)
 
         # Create a datetime index for plotting
         test_dates = X_test.index.get_level_values('date')
@@ -327,17 +349,17 @@ def modeling(df):
         plt.figure(figsize=(20, 4))
         plt.plot(datetime_index, y_test, label='Actual Prices', marker='o')
         plt.plot(datetime_index, predictions, label='Predicted Prices', marker='x')
-        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.title(f'Fold {fold} - XGB Predictions vs. Actual Prices')
         plt.xlabel('Date and Hour')
         plt.ylabel('Price')
         plt.legend()
         plt.show()
         
         
-        '''#cross plot for this
+        #cross plot for this
         plt.figure(figsize=(20, 4))
         plt.scatter(y_test, predictions,s=rmse) 
-        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.title(f'Fold {fold} - XGB Predictions vs. Actual Prices')
         plt.xlabel('Date and Hour')
         plt.ylabel('Price')
         print(f"Test RMSE for fold {fold}: {rmse}")
@@ -345,26 +367,31 @@ def modeling(df):
         #print(type(predictions))
         plt.xlabel('Actual Prices')
         plt.ylabel('Predicted Prices')
-        plt.legend()
         plt.show()
-        '''
+        
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        print(f"Test RMSE for fold {fold}: {r_2}")
     # Display average RMSE over all folds
         #print('test=',y_test)
         #print('pred=',predictions)
-    print("Average RMSE:", np.mean(rmse_scores))
-    
-   # index = pd.date_range(start='2022-01-01', end='2022-12-31', freq='D')
-
+    rmsX=np.mean(rmse_scores)
+    print("Average RMSE:",rmsX )
+    r2X=np.mean(r2_score)
+    print("Average R2_XGB:", r2X)
+    return [rmsX,r2X]
+  
 
 def linear_reg(df):
     # Prepare features and target variable
+    
     X = df.drop('price', axis=1)
     y = df['price']
     lr = LinearRegression()
     # Setup TimeSeries Cross-validation
-    tscv = TimeSeriesSplit(n_splits=50)
+    tscv = TimeSeriesSplit(n_splits=2)
     # Lists to store results of CV testing
     rmse_scores = []
+    r2_score=[]
 
     for fold, (train_index, test_index) in enumerate(tscv.split(X), 1):
         X_train, X_test = X.iloc[train_index], X.iloc[test_index]
@@ -377,7 +404,74 @@ def linear_reg(df):
         predictions = lr.predict(X_test)
         rmse = np.sqrt(mean_squared_error(y_test, predictions))
         rmse_scores.append(rmse)
+        r_2= metrics.r2_score(y_test, predictions)
+        r2_score.append(r_2)
+        # Create a datetime index for plotting
+        test_dates = X_test.index.get_level_values('date')
+        test_hours = X_test.index.get_level_values('hour')
+        datetime_index = pd.to_datetime(test_dates) + pd.to_timedelta(test_hours-1, unit='h')
 
+        # Plotting predictions vs. real values
+        plt.figure(figsize=(20, 4))
+        plt.plot(datetime_index, y_test, label='Actual Prices', marker='o')
+        plt.plot(datetime_index, predictions, label='Predicted Prices', marker='x')
+        plt.title(f'Fold {fold} - Linear Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        plt.legend()
+        plt.show()
+        
+    
+        #cross plot for this
+        plt.figure(figsize=(20, 4))
+        plt.scatter(y_test, predictions,s=rmse) 
+        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        #print(type(y_test))
+        #print(type(predictions))
+        plt.xlabel('Actual Prices')
+        plt.ylabel('Predicted Prices')
+        plt.legend()
+        plt.show()
+        
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        print(f"Test RMSE for fold {fold}: {r_2}")
+    # Display average RMSE over all folds
+    #print('test=',y_test)
+    #print('pred=',predictions)
+    rmsl=np.mean(rmse_scores)
+    print("Average RMSE_lineal:", rmsl)
+    r2l=np.mean(r2_score)
+    print("Average R2_lineal:", r2l)
+    return [rmsl,r2l]
+
+def regresor(df):
+    # Prepare features and target variable
+    
+    X = df.drop('price', axis=1)
+    y = df['price']
+    svr = SVR()
+    # Setup TimeSeries Cross-validation
+    tscv = TimeSeriesSplit(n_splits=2)
+    # Lists to store results of CV testing
+    rmse_scores = []
+    r2_score=[]
+
+    for fold, (train_index, test_index) in enumerate(tscv.split(X), 1):
+        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+        # Fit the model
+        svr.fit(X_train, y_train)
+
+        # Predict and evaluate
+        predictions = svr.predict(X_test)
+        rmse = np.sqrt(mean_squared_error(y_test, predictions))
+        rmse_scores.append(rmse)
+        r_2= metrics.r2_score(y_test, predictions)
+        r2_score.append(r_2)
         # Create a datetime index for plotting
         test_dates = X_test.index.get_level_values('date')
         test_hours = X_test.index.get_level_values('hour')
@@ -387,12 +481,12 @@ def linear_reg(df):
         plt.figure(figsize=(20, 4))
         plt.plot(datetime_index, y_test, label='Actual Prices', marker='o')
         plt.plot(datetime_index, predictions, label='Predicted Prices', marker='x')
-        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.title(f'Fold {fold} - SVR Predictions vs. Actual Prices')
         plt.xlabel('Date and Hour')
         plt.ylabel('Price')
         plt.legend()
-        plt.show()
-        '''
+        plt.show()'''
+        
         '''
         #cross plot for this
         plt.figure(figsize=(20, 4))
@@ -408,13 +502,281 @@ def linear_reg(df):
         plt.legend()
         plt.show()
         '''
-        
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        print(f"Test RMSE for fold {fold}: {r_2}")
     # Display average RMSE over all folds
-        #print('test=',y_test)
-        #print('pred=',predictions)
-        rmsl=np.mean(rmse_scores)
-        print("Average RMSE_lineal:", rmsl)
-        return rmsl
+    #print('test=',y_test)
+    #print('pred=',predictions)
+    rmsvr=np.mean(rmse_scores)
+    print("Average RMSE_svr:", rmsvr)
+    r2svr=np.mean(r2_score)
+    print("Average R2_svr:", r2svr)
+    return [rmsvr,r2svr]
+
+def knear(df):
+    # Prepare features and target variable
+    
+    X = df.drop('price', axis=1)
+    y = df['price']
+    knr = KNeighborsRegressor()
+    # Setup TimeSeries Cross-validation
+    tscv = TimeSeriesSplit(n_splits=2)
+    # Lists to store results of CV testing
+    rmse_scores = []
+    r2_score=[]
+
+    for fold, (train_index, test_index) in enumerate(tscv.split(X), 1):
+        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+        # Fit the model
+        knr.fit(X_train, y_train)
+
+        # Predict and evaluate
+        predictions = knr.predict(X_test)
+        rmse = np.sqrt(mean_squared_error(y_test, predictions))
+        rmse_scores.append(rmse)
+        r_2= metrics.r2_score(y_test, predictions)
+        r2_score.append(r_2)
+        # Create a datetime index for plotting
+        test_dates = X_test.index.get_level_values('date')
+        test_hours = X_test.index.get_level_values('hour')
+        datetime_index = pd.to_datetime(test_dates) + pd.to_timedelta(test_hours-1, unit='h')
+
+        # Plotting predictions vs. real values
+        plt.figure(figsize=(20, 4))
+        plt.plot(datetime_index, y_test, label='Actual Prices', marker='o')
+        plt.plot(datetime_index, predictions, label='Predicted Prices', marker='x')
+        plt.title(f'Fold {fold} - KNear Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        plt.legend()
+        plt.show()
+        
+        '''
+        #cross plot for this
+        plt.figure(figsize=(20, 4))
+        plt.scatter(y_test, predictions,s=rmse) 
+        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        #print(type(y_test))
+        #print(type(predictions))
+        plt.xlabel('Actual Prices')
+        plt.ylabel('Predicted Prices')
+        plt.legend()
+        plt.show()
+        '''
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        print(f"Test RMSE for fold {fold}: {r_2}")
+    # Display average RMSE over all folds
+    #print('test=',y_test)
+    #print('pred=',predictions)
+    rmsvr=np.mean(rmse_scores)
+    print("Average RMSE_knear:", rmsvr)
+    r2svr=np.mean(r2_score)
+    print("Average R2_knear:", r2svr)
+    return [rmsvr,r2svr]
+
+def knear(df):
+    # Prepare features and target variable
+    
+    X = df.drop('price', axis=1)
+    y = df['price']
+    knr = KNeighborsRegressor()
+    # Setup TimeSeries Cross-validation
+    tscv = TimeSeriesSplit(n_splits=2)
+    # Lists to store results of CV testing
+    rmse_scores = []
+    r2_score=[]
+
+    for fold, (train_index, test_index) in enumerate(tscv.split(X), 1):
+        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+        # Fit the model
+        knr.fit(X_train, y_train)
+
+        # Predict and evaluate
+        predictions = knr.predict(X_test)
+        rmse = np.sqrt(mean_squared_error(y_test, predictions))
+        rmse_scores.append(rmse)
+        r_2= metrics.r2_score(y_test, predictions)
+        r2_score.append(r_2)
+        # Create a datetime index for plotting
+        test_dates = X_test.index.get_level_values('date')
+        test_hours = X_test.index.get_level_values('hour')
+        datetime_index = pd.to_datetime(test_dates) + pd.to_timedelta(test_hours-1, unit='h')
+
+        # Plotting predictions vs. real values
+        plt.figure(figsize=(20, 4))
+        plt.plot(datetime_index, y_test, label='Actual Prices', marker='o')
+        plt.plot(datetime_index, predictions, label='Predicted Prices', marker='x')
+        plt.title(f'Fold {fold} - KNear Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        plt.legend()
+        plt.show()
+        
+        '''
+        #cross plot for this
+        plt.figure(figsize=(20, 4))
+        plt.scatter(y_test, predictions,s=rmse) 
+        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        #print(type(y_test))
+        #print(type(predictions))
+        plt.xlabel('Actual Prices')
+        plt.ylabel('Predicted Prices')
+        plt.legend()
+        plt.show()
+        '''
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        print(f"Test RMSE for fold {fold}: {r_2}")
+    # Display average RMSE over all folds
+    #print('test=',y_test)
+    #print('pred=',predictions)
+    rmsvr=np.mean(rmse_scores)
+    print("Average RMSE_tree:", rmsvr)
+    r2svr=np.mean(r2_score)
+    print("Average R2_tree:", r2svr)
+    return [rmsvr,r2svr]
+
+def tree(df):
+    # Prepare features and target variable
+    
+    X = df.drop('price', axis=1)
+    y = df['price']
+    dtr = DecisionTreeRegressor()
+    # Setup TimeSeries Cross-validation
+    tscv = TimeSeriesSplit(n_splits=2)
+    # Lists to store results of CV testing
+    rmse_scores = []
+    r2_score=[]
+
+    for fold, (train_index, test_index) in enumerate(tscv.split(X), 1):
+        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+        # Fit the model
+        dtr.fit(X_train, y_train)
+
+        # Predict and evaluate
+        predictions = dtr.predict(X_test)
+        rmse = np.sqrt(mean_squared_error(y_test, predictions))
+        rmse_scores.append(rmse)
+        r_2= metrics.r2_score(y_test, predictions)
+        r2_score.append(r_2)
+        # Create a datetime index for plotting
+        test_dates = X_test.index.get_level_values('date')
+        test_hours = X_test.index.get_level_values('hour')
+        datetime_index = pd.to_datetime(test_dates) + pd.to_timedelta(test_hours-1, unit='h')
+
+        # Plotting predictions vs. real values
+        plt.figure(figsize=(20, 4))
+        plt.plot(datetime_index, y_test, label='Actual Prices', marker='o')
+        plt.plot(datetime_index, predictions, label='Predicted Prices', marker='x')
+        plt.title(f'Fold {fold} - Tree Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        plt.legend()
+        plt.show()
+        
+        '''
+        #cross plot for this
+        plt.figure(figsize=(20, 4))
+        plt.scatter(y_test, predictions,s=rmse) 
+        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        #print(type(y_test))
+        #print(type(predictions))
+        plt.xlabel('Actual Prices')
+        plt.ylabel('Predicted Prices')
+        plt.legend()
+        plt.show()
+        '''
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        print(f"Test RMSE for fold {fold}: {r_2}")
+    # Display average RMSE over all folds
+    #print('test=',y_test)
+    #print('pred=',predictions)
+    rmsvr=np.mean(rmse_scores)
+    print("Average RMSE_tree:", rmsvr)
+    r2svr=np.mean(r2_score)
+    print("Average R2_tree:", r2svr)
+    return [rmsvr,r2svr]
+
+
+def forest(df):
+    # Prepare features and target variable
+    
+    X = df.drop('price', axis=1)
+    y = df['price']
+    rf = RandomForestRegressor()
+    # Setup TimeSeries Cross-validation
+    tscv = TimeSeriesSplit(n_splits=2)
+    # Lists to store results of CV testing
+    rmse_scores = []
+    r2_score=[]
+
+    for fold, (train_index, test_index) in enumerate(tscv.split(X), 1):
+        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+        # Fit the model
+        rf.fit(X_train, y_train)
+
+        # Predict and evaluate
+        predictions = rf.predict(X_test)
+        rmse = np.sqrt(mean_squared_error(y_test, predictions))
+        rmse_scores.append(rmse)
+        r_2= metrics.r2_score(y_test, predictions)
+        r2_score.append(r_2)
+        # Create a datetime index for plotting
+        test_dates = X_test.index.get_level_values('date')
+        test_hours = X_test.index.get_level_values('hour')
+        datetime_index = pd.to_datetime(test_dates) + pd.to_timedelta(test_hours-1, unit='h')
+
+        # Plotting predictions vs. real values
+        plt.figure(figsize=(20, 4))
+        plt.plot(datetime_index, y_test, label='Actual Prices', marker='o')
+        plt.plot(datetime_index, predictions, label='Predicted Prices', marker='x')
+        plt.title(f'Fold {fold} - Forest Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        plt.legend()
+        plt.show()
+        
+        '''
+        #cross plot for this
+        plt.figure(figsize=(20, 4))
+        plt.scatter(y_test, predictions,s=rmse) 
+        plt.title(f'Fold {fold} - Predictions vs. Actual Prices')
+        plt.xlabel('Date and Hour')
+        plt.ylabel('Price')
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        #print(type(y_test))
+        #print(type(predictions))
+        plt.xlabel('Actual Prices')
+        plt.ylabel('Predicted Prices')
+        plt.legend()
+        plt.show()
+        '''
+        print(f"Test RMSE for fold {fold}: {rmse}")
+        print(f"Test RMSE for fold {fold}: {r_2}")
+    # Display average RMSE over all folds
+    #print('test=',y_test)
+    #print('pred=',predictions)
+    rmsvr=np.mean(rmse_scores)
+    print("Average RMSE_forest:", rmsvr)
+    r2svr=np.mean(r2_score)
+    print("Average R2_forest:", r2svr)
+    return [rmsvr,r2svr]
 #DECIDING BEST MODEL???
 
 
@@ -430,7 +792,7 @@ if __name__ == "__main__":
     #start_date = input('Please enter a start date in MMDDYYYY: ')
     #end_date = input('Please enter a end date in MMDDYYYY: ')
     #elec_df = url_extract_electricity_data(start_date, end_date)
-    elec_df = url_extract_electricity_data("01012018", "01012023")
+    elec_df = url_extract_electricity_data("01012018", "12012023")
     population = population()
     #merging population with data
     
@@ -438,7 +800,19 @@ if __name__ == "__main__":
     engineered_df = engineering_features(elec_df)
     engineered_df = pd.merge_asof(engineered_df, population, left_on='date', right_index=True, direction='forward')
     print(engineered_df)
-    #plotting(engineered_df)
+    plotting(engineered_df)
     plotting_natalia(engineered_df)
-    modeling(engineered_df)
-    #linear_reg(engineered_df)
+    
+    '''
+    a=modeling(engineered_df)
+    b=linear_reg(engineered_df)
+    c=regresor(engineered_df)
+    d=knear(engineered_df)
+    e=tree(engineered_df)
+    f=forest(engineered_df)
+    print('XGBoost',a)
+    print('Linear Regression ',b)
+    print('Support Vector Machine',c)
+    print('K-Nearest Neighbours',d)
+    print('Decision Tree',e)
+    print('Forest Regression',f)'''
